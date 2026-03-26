@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>上海天气</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🌤️ 上海天气</h1>
+      <button class="settings-btn" id="settingsBtn">⚙️ 设置</button>
+    </header>
+
+    <div class="weather-card" id="weatherCard">
+      <div class="loading" id="loading">加载中...</div>
+      <div class="weather-content" id="weatherContent" style="display:none">
+        <div class="location" id="location"></div>
+        <div class="main-temp" id="mainTemp"></div>
+        <div class="condition" id="condition"></div>
+        <div class="details">
+          <div class="detail-item">
+            <span class="label">体感</span>
+            <span class="value" id="feelsLike"></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">湿度</span>
+            <span class="value" id="humidity"></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">风速</span>
+            <span class="value" id="wind"></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">降水</span>
+            <span class="value" id="precipitation"></span>
+          </div>
+        </div>
+        <div class="forecast" id="forecast"></div>
+        <div class="update-time">更新时间: <span id="updateTime"></span></div>
+      </div>
+      <div class="error" id="error" style="display:none"></div>
+    </div>
+
+    <div class="settings-panel" id="settingsPanel">
+      <h3>⚙️ 刷新设置</h3>
+      <div class="setting-item">
+        <label for="refreshInterval">刷新间隔（分钟）</label>
+        <input type="number" id="refreshInterval" min="1" max="60" value="5">
+      </div>
+      <div class="setting-actions">
+        <button class="btn-primary" id="saveSettings">保存</button>
+        <button class="btn-secondary" id="closeSettings">取消</button>
+      </div>
+      <button class="btn-refresh" id="refreshNow">🔄 立即刷新</button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
