@@ -25,6 +25,13 @@
     .item .value { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
     .item .value.small { font-size: 0.9rem; }
 
+    .forecast { margin-top: 12px; background: #0f172a; border-radius: 14px; padding: 16px; display: flex; justify-content: space-around; text-align: center; }
+    .forecast .item { background: transparent; padding: 0 8px; }
+    .forecast .label { font-size: 0.75rem; color: #475569; margin-bottom: 6px; }
+    .forecast .value { font-size: 1.4rem; font-weight: 700; }
+    .forecast .hi { color: #f97316; }
+    .forecast .lo { color: #38bdf8; }
+
     .raw { margin-top: 16px; background: #0f172a; border-radius: 12px; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: 0.85rem; color: #4fc3f7; letter-spacing: 0.3px; word-break: break-all; }
 
     .footer { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid #334155; }
@@ -64,6 +71,16 @@
         <div class="item"><div class="label">💧 湿度</div><div class="value" id="humidity">--</div></div>
         <div class="item"><div class="label">👁 能见度</div><div class="value" id="visib">--</div></div>
       </div>
+      <div class="forecast">
+        <div class="item">
+          <div class="label">▲ 今日最高</div>
+          <div class="value hi" id="maxTemp">--</div>
+        </div>
+        <div class="item">
+          <div class="label">▼ 今日最低</div>
+          <div class="value lo" id="minTemp">--</div>
+        </div>
+      </div>
       <div class="raw" id="raw"></div>
     </div>
 
@@ -78,63 +95,39 @@
 
   <script>
     var DATA_URL = 'https://raw.githubusercontent.com/wildwake123-afk/shanghai-weather/main/data/metar.json';
+    var FORECAST_URL = 'https://api.open-meteo.com/v1/forecast?latitude=31.1445&longitude=121.8083&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FShanghai&forecast_days=3';
     var interval = parseInt(localStorage.getItem('metarInterval')) || 5;
     var timer = null, nextTimer = null, lastFetchTime = 0;
 
     document.getElementById('minInput').value = interval;
 
     function parseMetar(raw) {
-      var r = {
-        temp: '--', dewp: '--', wind: '--', windKts: '--',
-        pressure: '--', visibility: '--', clouds: [], wx: []
-      };
+      var r = { temp: '--', dewp: '--', wind: '--', windKts: '--', pressure: '--', visibility: '--' };
       if (!raw) return r;
-
-      // Temperature/dewpoint: 17/10 or M05/M10
       var td = raw.match(/(M)?(\d{2})\/(M)?(\d{2})/);
       if (td) {
         r.temp = (td[1] ? '-' : '') + td[2] + '°C';
         r.dewp = (td[3] ? '-' : '') + td[4] + '°C';
       }
-
-      // Wind: 17004MPS or 00000MPS
       var wm = raw.match(/(\d{3})(\d{2})MPS/);
       if (wm) {
         var dir = parseInt(wm[1]), spd = parseInt(wm[2]);
         var dirs = ['北','北北东','东北东','东北','东','东南东','东南','南','西南西','西南','西','西北西','西北','北北西','北北西','北'];
-        var dt = dirs[Math.round(dir / 22.5) % 16] || dir + '°';
-        r.wind = dt + ' ' + spd + 'm/s';
+        r.wind = dirs[Math.round(dir / 22.5) % 16] + ' ' + spd + 'm/s';
         r.windKts = (spd * 1.944).toFixed(1) + 'kt';
       }
-
-      // Gust
       var gst = raw.match(/G(\d{2})MPS/);
       if (gst) r.wind += ' 阵风' + gst[1] + 'm/s';
-
-      // Variable wind
       var vrb = raw.match(/(\d{3})V(\d{3})/);
       if (vrb) r.wind += ' 变风' + vrb[1] + '°~' + vrb[2] + '°';
-
-      // Pressure: Q1015
       var pm = raw.match(/Q(\d{4})/);
       if (pm) r.pressure = pm[1] + ' hPa';
-
-      // Visibility: 9999 = 10km+, 7000 = 7km etc
       if (raw.indexOf('CAVOK') !== -1 || raw.indexOf('9999') !== -1) {
         r.visibility = '≥10km';
       } else {
         var vim = raw.match(/(\d{4})/);
         if (vim) r.visibility = (parseInt(vim[1]) / 1000).toFixed(1) + 'km';
       }
-
-      // Weather phenomena
-      var wx = raw.match(/(TS|TSRA|RA|DZ|SN|SG|GR|GS|BR|FG|HZ|SQ|FC|UP)/g);
-      if (wx) r.wx = wx;
-
-      // Clouds: FEW025 BKN040 OVC060
-      var cm = raw.match(/(FEW|SCT|BKN|OVC|VV)(\d{3})/g);
-      if (cm) r.clouds = cm;
-
       return r;
     }
 
@@ -170,8 +163,8 @@
       document.getElementById('content').style.display = 'none';
       document.getElementById('error').style.display = 'none';
 
-      var ts = '?t=' + Date.now();
-      window.fetch(DATA_URL + ts)
+      // METAR（必须成功）
+      window.fetch(DATA_URL + '?t=' + Date.now())
         .then(function(r) { return r.json(); })
         .then(function(d) {
           btn.classList.remove('loading');
@@ -197,7 +190,20 @@
           btn.classList.remove('loading');
           document.getElementById('loading').style.display = 'none';
           document.getElementById('error').style.display = 'block';
-          document.getElementById('error').textContent = '获取失败，请检查网络';
+          document.getElementById('error').textContent = 'METAR 获取失败，请检查网络';
+        });
+
+      // 今日预报（可选）
+      window.fetch(FORECAST_URL + '&t=' + Date.now())
+        .then(function(r) { return r.json(); })
+        .then(function(fc) {
+          if (fc && fc.daily && fc.daily.time) {
+            var today = new Date().toISOString().slice(0, 10);
+            var idx = fc.daily.time.indexOf(today);
+            if (idx === -1) idx = 0;
+            document.getElementById('maxTemp').textContent = Math.round(fc.daily.temperature_2m_max[idx]) + '°';
+            document.getElementById('minTemp').textContent = Math.round(fc.daily.temperature_2m_min[idx]) + '°';
+          }
         });
     }
 
