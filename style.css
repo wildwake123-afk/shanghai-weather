@@ -116,55 +116,41 @@ header h1 {
   color: #333;
 }
 
-.forecast {
+.metar-section {
   border-top: 1px solid #eee;
   padding-top: 20px;
 }
 
-.forecast h4 {
+.metar-section h4 {
   font-size: 0.9rem;
   color: #888;
   margin-bottom: 12px;
   font-weight: 500;
 }
 
-.forecast-days {
-  display: flex;
-  justify-content: space-between;
-}
-
-.forecast-day {
-  flex: 1;
-  text-align: center;
-  padding: 12px 8px;
-  border-radius: 12px;
-  background: #f8f9fa;
-  margin: 0 4px;
-}
-
-.forecast-day:first-child {
-  margin-left: 0;
-}
-
-.forecast-day:last-child {
-  margin-right: 0;
-}
-
-.forecast-day .day-name {
-  font-size: 0.8rem;
-  color: #888;
-  margin-bottom: 4px;
-}
-
-.forecast-day .day-icon {
-  font-size: 1.5rem;
-  margin: 4px 0;
-}
-
-.forecast-day .day-temp {
+.metar-raw {
+  background: #1a1a2e;
+  color: #4fc3f7;
+  font-family: 'Courier New', monospace;
   font-size: 0.95rem;
-  font-weight: 600;
-  color: #333;
+  padding: 14px 18px;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+  margin-bottom: 14px;
+}
+
+.metar-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metar-info > div {
+  background: #f8f9fa;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #555;
 }
 
 .update-time {

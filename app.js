@@ -1,9 +1,8 @@
 // 上海天气 - 实时天气查看器
-// 数据来源: Open-Meteo API (上海浦东机场气象站 ZSPD)
+// 数据来源: NOAA RAW METAR (ZSPD - 上海浦东机场)
+// 每次刷新自动获取最新 METAR
 
-const LAT = 31.1445;
-const LON = 121.8083;
-const WEATHER_URL = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=Asia%2FShanghai&forecast_days=3`;
+const METAR_URL = 'https://tgftp.nws.noaa.gov/data/observations/metar/stations/ZSPD.TXT';
 
 // 默认刷新间隔（分钟）
 const DEFAULT_REFRESH_INTERVAL = 5;
@@ -23,7 +22,7 @@ let refreshTimer = null;
 // 初始化
 function init() {
   loadSettings();
-  fetchWeather();
+  fetchMetar();
   startAutoRefresh();
   bindEvents();
 }
@@ -34,7 +33,7 @@ function bindEvents() {
   document.getElementById('closeSettings').addEventListener('click', closeSettings);
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('refreshNow').addEventListener('click', () => {
-    fetchWeather();
+    fetchMetar();
     closeSettings();
   });
   overlay.addEventListener('click', closeSettings);
@@ -68,7 +67,7 @@ function saveSettings() {
 // 开始自动刷新
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(fetchWeather, refreshInterval * 60 * 1000);
+  refreshTimer = setInterval(fetchMetar, refreshInterval * 60 * 1000);
 }
 
 // 重新开始自动刷新
@@ -76,16 +75,24 @@ function restartAutoRefresh() {
   startAutoRefresh();
 }
 
-// 获取天气数据
-async function fetchWeather() {
+// 获取并解析 METAR
+async function fetchMetar() {
   try {
     showLoading(true);
     
-    const response = await fetch(WEATHER_URL);
+    const response = await fetch(METAR_URL);
     if (!response.ok) throw new Error('网络请求失败');
     
-    const data = await response.json();
-    updateUI(data);
+    const text = await response.text();
+    const lines = text.trim().split('\n');
+    
+    if (lines.length < 2) throw new Error('METAR 数据格式异常');
+    
+    const dateStr = lines[0].trim();   // 2026/03/27 05:00
+    const rawMetar = lines[1].trim(); // ZSPD 270500Z ...
+    
+    const parsed = parseMetar(rawMetar, dateStr);
+    updateUI(parsed);
     showLoading(false);
   } catch (error) {
     console.error('获取天气失败:', error);
@@ -93,45 +100,198 @@ async function fetchWeather() {
   }
 }
 
+// 解析 METAR 字符串
+// 例: ZSPD 270500Z 17004MPS 130V190 CAVOK 17/10 Q1015 NOSIG
+function parseMetar(metar, dateStr) {
+  const parts = metar.split(/\s+/);
+  const result = {
+    station: parts[0] || 'ZSPD',
+    raw: metar,
+    date: dateStr,
+    time: '',
+    wind: '',
+    windSpeed: '',
+    windDir: '',
+    visibility: '',
+    condition: '',
+    conditionIcon: '',
+    temp: '',
+    dewpoint: '',
+    pressure: '',
+    trend: '',
+    clouds: ''
+  };
+  
+  // 解析时间 (270500Z)
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (/^\d{6}Z$/.test(p)) {
+      const day = p.slice(0, 2);
+      const hour = p.slice(2, 4);
+      const min = p.slice(4, 6);
+      result.time = `${hour}:${min} UTC`;
+      // UTC 转本地时间（上海 = UTC+8）
+      const utcHour = parseInt(hour);
+      const localHour = (utcHour + 8) % 24;
+      result.localTime = `${String(localHour).padStart(2,'0')}:${min} 本地`;
+      break;
+    }
+  }
+  
+  // 解析风向风速 (17004MPS 或 00000MPS)
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (/^\d{5}MPS$/.test(p) || /^\d{3}\d{2}MPS$/.test(p)) {
+      let dir = parseInt(p.slice(0, 3));
+      const speed = parseInt(p.slice(3, 5));
+      if (dir === 0 || dir === 360) result.windDir = '北';
+      else if (dir === 90) result.windDir = '东';
+      else if (dir === 180) result.windDir = '南';
+      else if (dir === 270) result.windDir = '西';
+      else result.windDir = `${dir}°`;
+      
+      result.windSpeed = `${speed} m/s`;
+      // 换算节
+      const knots = (speed * 1.94384).toFixed(1);
+      result.wind = `${result.windDir} ${speed} m/s (${knots} kt)`;
+      
+      // 检查变量风向
+      if (i+1 < parts.length && /^\d{3}V\d{3}$/.test(parts[i+1])) {
+        const vparts = parts[i+1].match(/(\d{3})V(\d{3})/);
+        result.wind += ` 变风 ${vparts[1]}°-${vparts[2]}°`;
+        i++;
+      }
+      break;
+    }
+  }
+  
+  // 解析能见度
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (/^CAVOK$/.test(p)) {
+      result.visibility = '≥10km（能见度极好）';
+      result.condition = '晴空万里';
+      result.conditionIcon = '☀️';
+      break;
+    }
+    if (/^\d{4}$/.test(p)) {
+      const vis = parseInt(p);
+      result.visibility = vis >= 9999 ? '≥10km' : `${vis}m`;
+      break;
+    }
+    if (/^9999$/.test(p)) {
+      result.visibility = '≥10km';
+      break;
+    }
+  }
+  
+  // 解析天气现象 + 云
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    // CAVOK 已经处理
+    if (p === 'CAVOK') continue;
+    
+    // 气温/露点 (17/10)
+    const tdMatch = p.match(/^(M)?(\d{2})\/((M)?(\d{2})|-)$/);
+    if (tdMatch) {
+      const sign1 = tdMatch[1] === 'M' ? '-' : '';
+      const sign2 = tdMatch[4] === 'M' ? '-' : '';
+      result.temp = `${sign1}${tdMatch[2]}°C`;
+      result.dewpoint = `${sign2}${tdMatch[5] || tdMatch[3]}°C`;
+      continue;
+    }
+    
+    // 气压 Q1015
+    if (/^Q\d{4}$/.test(p)) {
+      result.pressure = `${p.slice(1)} hPa`;
+      continue;
+    }
+    
+    // 趋势 NOSIG BECMG TEMPO 等
+    if (/^(NOSIG|BECMG|TEMPO|DZ|RA|SN|TS|SH|FG|BR|SQ|GR)$/.test(p)) {
+      if (p === 'NOSIG') result.trend = '无明显变化';
+      else if (p === 'BECMG') result.trend = '预期变化';
+      else if (p === 'TEMPO') result.trend = '暂时变化';
+      else result.trend = p;
+      continue;
+    }
+    
+    // 云 (SCT025 BKN040 OVC060 等)
+    if (/^(FEW|SCT|BKN|OVC|VV)(\d{3})$/.test(p)) {
+      const cloudMap = { FEW: '少云', SCT: '疏云', BKN: '多云', OVC: '阴天', VV: '垂直能见度' };
+      const type = p.slice(0, 3);
+      const h = parseInt(p.slice(3)) * 100;
+      result.clouds = `${cloudMap[type] || type} ${h}ft`;
+      continue;
+    }
+    
+    // 天气现象码
+    if (/^(TS|TSRA|RA|DZ|SN|SG|GR|GS|BR|FG|HZ|SQ|FC|SS|DS)$/.test(p)) {
+      const wxMap = {
+        'TS': '雷暴', 'TSRA': '雷雨', 'RA': '雨', 'DZ': '毛毛雨',
+        'SN': '雪', 'SG': '雪粒', 'GR': '冰雹', 'GS': '小冰雹',
+        'BR': '轻雾', 'FG': '雾', 'HZ': '霾', 'SQ': '飑',
+        'FC': '龙卷风', 'SS': '沙尘暴', 'DS': '尘暴'
+      };
+      if (!result.wxPhenomena) result.wxPhenomena = [];
+      result.wxPhenomena.push(wxMap[p] || p);
+    }
+  }
+  
+  // 根据天气现象更新状况
+  if (result.wxPhenomena && result.wxPhenomena.length > 0) {
+    result.condition = result.conditionIcon = '';
+    const iconMap = {
+      '雷暴': '⛈️', '雷雨': '⛈️', '雨': '🌧️', '毛毛雨': '🌧️',
+      '雪': '❄️', '小雪': '🌨️', '雾': '🌫️', '轻雾': '🌫️',
+      '霾': '🌫️', '冰雹': '🧊', '飑': '💨'
+    };
+    result.conditionIcon = iconMap[result.wxPhenomena[0]] || '🌧️';
+    result.condition = result.wxPhenomena.join('、');
+  }
+  
+  if (!result.condition) {
+    result.condition = result.conditionIcon === '☀️' ? '晴空万里' : '多云';
+  }
+  
+  return result;
+}
+
 // 更新UI
 function updateUI(data) {
-  const cw = data.current_weather;
-  const hourly = data.hourly;
-  const daily = data.daily;
-  
-  // 找到当前小时在 hourly 数组中的索引
-  const now = new Date();
-  const currentHourStr = now.toISOString().slice(0, 13); // YYYY-MM-DDTHH
-  const hourIndex = hourly.time.findIndex(t => t.startsWith(currentHourStr));
-  
-  // 位置（上海浦东机场气象站）
-  document.getElementById('location').textContent = '📍 上海浦东机场 (ZSPD)';
+  document.getElementById('location').textContent = `📍 ${data.station} 上海浦东机场`;
   
   // 温度
-  document.getElementById('mainTemp').textContent = `${Math.round(cw.temperature)}°`;
+  const tempNum = parseFloat(data.temp);
+  document.getElementById('mainTemp').textContent = `${tempNum}°`;
   
   // 天气状况
-  const weatherCode = hourIndex >= 0 ? hourly.weather_code[hourIndex] : cw.weathercode;
-  const condition = getConditionText(weatherCode);
-  const conditionIcon = getConditionIcon(weatherCode);
-  document.getElementById('condition').textContent = `${conditionIcon} ${condition}`;
+  document.getElementById('condition').textContent = `${data.conditionIcon} ${data.condition}`;
   
-  // 体感温度（使用当前温度近似）
-  document.getElementById('feelsLike').textContent = `${cw.temperature}°C`;
+  // 详情
+  document.getElementById('feelsLike').textContent = `${data.temp} / ${data.dewpoint}`;
+  document.getElementById('humidity').textContent = data.dewpoint ? estimateHumidity(tempNum, parseFloat(data.dewpoint)) : '--';
+  document.getElementById('wind').textContent = data.wind || '--';
+  document.getElementById('precipitation').textContent = data.wxPhenomena ? data.wxPhenomena.join('、') : '无';
   
-  // 湿度
-  const humidity = hourIndex >= 0 ? hourly.relative_humidity_2m[hourIndex] : '--';
-  document.getElementById('humidity').textContent = `${humidity}%`;
+  // 气压
+  const pressureNum = parseFloat(data.pressure);
+  document.getElementById('pressureDisplay') || createPressureDisplay();
+  document.getElementById('pressureDisplay').textContent = `${data.pressure}`;
   
-  // 风速
-  document.getElementById('wind').textContent = `${cw.windspeed} km/h`;
-  
-  // 降水量
-  const precip = hourIndex >= 0 ? hourly.precipitation[hourIndex] : 0;
-  document.getElementById('precipitation').textContent = `${precip} mm`;
-  
-  // 预报
-  updateForecast(daily);
+  // 预报区 — 显示原始 METAR
+  const container = document.getElementById('forecast');
+  container.innerHTML = `
+    <h4>📡 METAR 原始数据</h4>
+    <div class="metar-raw">${data.raw}</div>
+    <div class="metar-info">
+      <div><span>📅 ${data.date}</span></div>
+      <div><span>🕐 ${data.time} / ${data.localTime}</span></div>
+      ${data.clouds ? `<div><span>☁️ ${data.clouds}</span></div>` : ''}
+      <div><span>📊 ${data.pressure}</span></div>
+      ${data.trend ? `<div><span>📈 ${data.trend}</span></div>` : ''}
+    </div>
+  `;
   
   // 更新时间
   document.getElementById('updateTime').textContent = new Date().toLocaleString('zh-CN');
@@ -139,108 +299,21 @@ function updateUI(data) {
   showContent(true);
 }
 
-// 更新预报
-function updateForecast(daily) {
-  const container = document.getElementById('forecast');
-  const days = ['今天', '明天', '后天'];
-  const dayNames = daily.time.map((d, i) => days[i] || formatDay(d));
-  
-  let html = '<h4>📅 三日预报</h4><div class="forecast-days">';
-  
-  daily.time.slice(0, 3).forEach((date, index) => {
-    const maxTemp = Math.round(daily.temperature_2m_max[index]);
-    const minTemp = Math.round(daily.temperature_2m_min[index]);
-    const code = daily.weather_code[index];
-    const icon = getConditionIcon(code);
-    
-    html += `
-      <div class="forecast-day">
-        <div class="day-name">${dayNames[index]}</div>
-        <div class="day-icon">${icon}</div>
-        <div class="day-temp">${maxTemp}° / ${minTemp}°</div>
-      </div>
-    `;
-  });
-  
-  html += '</div>';
-  container.innerHTML = html;
+// 根据温度和露点估算相对湿度
+function estimateHumidity(temp, dewpoint) {
+  if (isNaN(temp) || isNaN(dewpoint) || temp <= dewpoint) return '--';
+  const rh = 100 * Math.exp((17.625 * dewpoint) / (243.04 + dewpoint) - (17.625 * temp) / (243.04 + temp));
+  return `${Math.round(rh)}%`;
 }
 
-// 格式化日期为"周X"
-function formatDay(dateStr) {
-  const d = new Date(dateStr);
-  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  return weekdays[d.getDay()];
-}
-
-// 根据 WMO 天气码获取文字描述
-function getConditionText(code) {
-  const conditions = {
-    0: '晴',
-    1: '晴间多云',
-    2: '多云',
-    3: '阴',
-    45: '雾',
-    48: '雾凇',
-    51: '小毛毛雨',
-    53: '中毛毛雨',
-    55: '大毛毛雨',
-    56: '冻毛毛雨',
-    57: '强冻毛毛雨',
-    61: '小雨',
-    63: '中雨',
-    65: '大雨',
-    66: '冻雨',
-    67: '强冻雨',
-    71: '小雪',
-    73: '中雪',
-    75: '大雪',
-    77: '雪粒',
-    80: '阵雨',
-    81: '中阵雨',
-    82: '强阵雨',
-    85: '阵雪',
-    86: '强阵雪',
-    95: '雷暴',
-    96: '雷暴+小冰雹',
-    99: '雷暴+大冰雹'
-  };
-  return conditions[code] || '未知';
-}
-
-// 根据 WMO 天气码获取图标
-function getConditionIcon(code) {
-  const icons = {
-    0: '☀️',
-    1: '🌤️',
-    2: '⛅',
-    3: '☁️',
-    45: '🌫️',
-    48: '🌫️',
-    51: '🌧️',
-    53: '🌧️',
-    55: '🌧️',
-    56: '🌧️',
-    57: '🌧️',
-    61: '🌧️',
-    63: '🌧️',
-    65: '🌧️',
-    66: '🌨️',
-    67: '🌨️',
-    71: '🌨️',
-    73: '🌨️',
-    75: '❄️',
-    77: '🌨️',
-    80: '🌦️',
-    81: '🌦️',
-    82: '🌦️',
-    85: '🌨️',
-    86: '🌨️',
-    95: '⛈️',
-    96: '⛈️',
-    99: '⛈️'
-  };
-  return icons[code] || '🌡️';
+// 创建气压显示（扩展详情）
+function createPressureDisplay() {
+  const details = document.querySelector('.details');
+  const pressureItem = document.createElement('div');
+  pressureItem.className = 'detail-item';
+  pressureItem.innerHTML = `<span class="label">气压</span><span class="value" id="pressureDisplay">--</span>`;
+  details.appendChild(pressureItem);
+  return document.getElementById('pressureDisplay');
 }
 
 // 显示/隐藏 loading
