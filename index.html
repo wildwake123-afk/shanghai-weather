@@ -25,13 +25,6 @@
     .item .value { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
     .item .value.small { font-size: 0.9rem; }
 
-    .forecast { margin-top: 12px; background: #0f172a; border-radius: 14px; padding: 16px; display: flex; justify-content: space-around; text-align: center; }
-    .forecast .item { background: transparent; padding: 0 8px; }
-    .forecast .label { font-size: 0.75rem; color: #475569; margin-bottom: 6px; }
-    .forecast .value { font-size: 1.4rem; font-weight: 700; }
-    .forecast .hi { color: #f97316; }
-    .forecast .lo { color: #38bdf8; }
-
     .raw { margin-top: 16px; background: #0f172a; border-radius: 12px; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: 0.85rem; color: #4fc3f7; letter-spacing: 0.3px; word-break: break-all; }
 
     .footer { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid #334155; }
@@ -71,16 +64,6 @@
         <div class="item"><div class="label">💧 湿度</div><div class="value" id="humidity">--</div></div>
         <div class="item"><div class="label">👁 能见度</div><div class="value" id="visib">--</div></div>
       </div>
-      <div class="forecast">
-        <div class="item">
-          <div class="label">▲ 今日预报最高</div>
-          <div class="value hi" id="maxTemp">--</div>
-        </div>
-        <div class="item">
-          <div class="label">▼ 今日预报最低</div>
-          <div class="value lo" id="minTemp">--</div>
-        </div>
-      </div>
       <div class="raw" id="raw"></div>
     </div>
 
@@ -95,7 +78,6 @@
 
   <script>
     var DATA_URL = 'https://raw.githubusercontent.com/wildwake123-afk/shanghai-weather/main/data/metar.json';
-    var FORECAST_URL = 'https://api.open-meteo.com/v1/forecast?latitude=31.1445&longitude=121.8083&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FShanghai&forecast_days=3';
     var interval = parseInt(localStorage.getItem('metarInterval')) || 5;
     var timer = null, nextTimer = null, lastFetchTime = 0;
 
@@ -191,19 +173,6 @@
           document.getElementById('loading').style.display = 'none';
           document.getElementById('error').style.display = 'block';
           document.getElementById('error').textContent = 'METAR 获取失败，请检查网络';
-        });
-
-      // 今日预报（可选）
-      window.fetch(FORECAST_URL + '&t=' + Date.now())
-        .then(function(r) { return r.json(); })
-        .then(function(fc) {
-          if (fc && fc.daily && fc.daily.time) {
-            var today = new Date().toISOString().slice(0, 10);
-            var idx = fc.daily.time.indexOf(today);
-            if (idx === -1) idx = 0;
-            document.getElementById('maxTemp').textContent = Math.round(fc.daily.temperature_2m_max[idx]) + '°';
-            document.getElementById('minTemp').textContent = Math.round(fc.daily.temperature_2m_min[idx]) + '°';
-          }
         });
     }
 
