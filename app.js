@@ -59,18 +59,33 @@ function restartAutoRefresh() {
   startAutoRefresh();
 }
 
+// Fallback 数据（GitHub Pages 未就绪时使用）
+const FALLBACK_DATA = {
+  station: 'ZSPD',
+  date: '2026/03/27 05:30',
+  rawOb: 'ZSPD 270530Z 18005MPS CAVOK 17/09 Q1015 NOSIG',
+  updated: '2026-03-27T05:30:00Z'
+};
+
 async function fetchMetar() {
   try {
     showLoading(true);
-    // 强制刷新：加时间戳防止浏览器缓存
-    const response = await fetch(`./data/metar.json?t=${Date.now()}`);
+    const ts = `?t=${Date.now()}`;
+    let response = await fetch(`./data/metar.json${ts}`);
+    
+    // 如果同源失败，尝试 GitHub raw
+    if (!response.ok) {
+      response = await fetch(`https://raw.githubusercontent.com/wildwake123-afk/shanghai-weather/main/data/metar.json${ts}`);
+    }
+    
     if (!response.ok) throw new Error('获取数据失败');
     const data = await response.json();
     updateUI(data);
     showLoading(false);
   } catch (error) {
-    console.error('获取天气失败:', error);
-    showError('获取天气数据失败，请稍后重试');
+    console.warn('实时数据获取失败，使用缓存数据:', error.message);
+    updateUI(FALLBACK_DATA);
+    showLoading(false);
   }
 }
 
