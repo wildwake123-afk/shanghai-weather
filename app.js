@@ -1,7 +1,9 @@
 // 上海天气 - 实时天气查看器
-// 数据来源: wttr.in
+// 数据来源: Open-Meteo API (上海浦东机场气象站 ZSPD)
 
-const WEATHER_URL = 'https://wttr.in/Shanghai?format=j1&lang=zh';
+const LAT = 31.1445;
+const LON = 121.8083;
+const WEATHER_URL = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=Asia%2FShanghai&forecast_days=3`;
 
 // 默认刷新间隔（分钟）
 const DEFAULT_REFRESH_INTERVAL = 5;
@@ -93,27 +95,43 @@ async function fetchWeather() {
 
 // 更新UI
 function updateUI(data) {
-  const current = data.current_condition[0];
+  const cw = data.current_weather;
+  const hourly = data.hourly;
+  const daily = data.daily;
   
-  // 位置
-  document.getElementById('location').textContent = '上海市';
+  // 找到当前小时在 hourly 数组中的索引
+  const now = new Date();
+  const currentHourStr = now.toISOString().slice(0, 13); // YYYY-MM-DDTHH
+  const hourIndex = hourly.time.findIndex(t => t.startsWith(currentHourStr));
+  
+  // 位置（上海浦东机场气象站）
+  document.getElementById('location').textContent = '📍 上海浦东机场 (ZSPD)';
   
   // 温度
-  document.getElementById('mainTemp').textContent = `${current.temp_C}°`;
+  document.getElementById('mainTemp').textContent = `${Math.round(cw.temperature)}°`;
   
   // 天气状况
-  const condition = getConditionText(current.weatherCode);
-  const conditionIcon = getConditionIcon(current.weatherCode);
+  const weatherCode = hourIndex >= 0 ? hourly.weather_code[hourIndex] : cw.weathercode;
+  const condition = getConditionText(weatherCode);
+  const conditionIcon = getConditionIcon(weatherCode);
   document.getElementById('condition').textContent = `${conditionIcon} ${condition}`;
   
-  // 详情
-  document.getElementById('feelsLike').textContent = `${current.FeelsLikeC}°C`;
-  document.getElementById('humidity').textContent = `${current.humidity}%`;
-  document.getElementById('wind').textContent = `${current.windspeedKmph} km/h`;
-  document.getElementById('precipitation').textContent = `${current.precipMM} mm`;
+  // 体感温度（使用当前温度近似）
+  document.getElementById('feelsLike').textContent = `${cw.temperature}°C`;
+  
+  // 湿度
+  const humidity = hourIndex >= 0 ? hourly.relative_humidity_2m[hourIndex] : '--';
+  document.getElementById('humidity').textContent = `${humidity}%`;
+  
+  // 风速
+  document.getElementById('wind').textContent = `${cw.windspeed} km/h`;
+  
+  // 降水量
+  const precip = hourIndex >= 0 ? hourly.precipitation[hourIndex] : 0;
+  document.getElementById('precipitation').textContent = `${precip} mm`;
   
   // 预报
-  updateForecast(data.weather);
+  updateForecast(daily);
   
   // 更新时间
   document.getElementById('updateTime').textContent = new Date().toLocaleString('zh-CN');
@@ -122,20 +140,22 @@ function updateUI(data) {
 }
 
 // 更新预报
-function updateForecast(forecast) {
+function updateForecast(daily) {
   const container = document.getElementById('forecast');
   const days = ['今天', '明天', '后天'];
+  const dayNames = daily.time.map((d, i) => days[i] || formatDay(d));
   
   let html = '<h4>📅 三日预报</h4><div class="forecast-days">';
   
-  forecast.slice(0, 3).forEach((day, index) => {
-    const maxTemp = day.maxtempC;
-    const minTemp = day.mintempC;
-    const icon = getConditionIcon(day.hourly[4].weatherCode);
+  daily.time.slice(0, 3).forEach((date, index) => {
+    const maxTemp = Math.round(daily.temperature_2m_max[index]);
+    const minTemp = Math.round(daily.temperature_2m_min[index]);
+    const code = daily.weather_code[index];
+    const icon = getConditionIcon(code);
     
     html += `
       <div class="forecast-day">
-        <div class="day-name">${days[index]}</div>
+        <div class="day-name">${dayNames[index]}</div>
         <div class="day-icon">${icon}</div>
         <div class="day-temp">${maxTemp}° / ${minTemp}°</div>
       </div>
@@ -146,112 +166,79 @@ function updateForecast(forecast) {
   container.innerHTML = html;
 }
 
-// 根据天气码获取文字描述
+// 格式化日期为"周X"
+function formatDay(dateStr) {
+  const d = new Date(dateStr);
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  return weekdays[d.getDay()];
+}
+
+// 根据 WMO 天气码获取文字描述
 function getConditionText(code) {
   const conditions = {
-    '113': '晴',
-    '116': '多云',
-    '119': '阴',
-    '122': '阴',
-    '143': '雾',
-    '176': '局部阵雨',
-    '179': '局部阵雪',
-    '182': '局部雨夹雪',
-    '185': '局部雨夹雪',
-    '200': '局部雷暴',
-    '227': '局部降雪',
-    '230': '大雪',
-    '248': '雾',
-    '260': '雾',
-    '263': '小雨',
-    '266': '小雨',
-    '281': '雨夹雪',
-    '284': '雨夹雪',
-    '293': '小雨',
-    '296': '小雨',
-    '299': '中雨',
-    '302': '中雨',
-    '305': '大雨',
-    '308': '大雨',
-    '311': '雨夹雪',
-    '314': '雨夹雪',
-    '317': '雨夹雪',
-    '320': '小雪',
-    '323': '小雪',
-    '326': '小雪',
-    '329': '中雪',
-    '332': '中雪',
-    '335': '大雪',
-    '338': '大雪',
-    '350': '冰粒',
-    '353': '小雨',
-    '356': '中雨',
-    '359': '大雨',
-    '362': '小雨夹雪',
-    '365': '小雪',
-    '368': '小雪',
-    '371': '中雪',
-    '374': '冰粒',
-    '377': '冰粒',
-    '386': '雷暴',
-    '389': '雷暴',
-    '392': '雷暴',
-    '395': '大雪'
+    0: '晴',
+    1: '晴间多云',
+    2: '多云',
+    3: '阴',
+    45: '雾',
+    48: '雾凇',
+    51: '小毛毛雨',
+    53: '中毛毛雨',
+    55: '大毛毛雨',
+    56: '冻毛毛雨',
+    57: '强冻毛毛雨',
+    61: '小雨',
+    63: '中雨',
+    65: '大雨',
+    66: '冻雨',
+    67: '强冻雨',
+    71: '小雪',
+    73: '中雪',
+    75: '大雪',
+    77: '雪粒',
+    80: '阵雨',
+    81: '中阵雨',
+    82: '强阵雨',
+    85: '阵雪',
+    86: '强阵雪',
+    95: '雷暴',
+    96: '雷暴+小冰雹',
+    99: '雷暴+大冰雹'
   };
   return conditions[code] || '未知';
 }
 
-// 根据天气码获取图标
+// 根据 WMO 天气码获取图标
 function getConditionIcon(code) {
   const icons = {
-    '113': '☀️',
-    '116': '⛅',
-    '119': '☁️',
-    '122': '☁️',
-    '143': '🌫️',
-    '176': '🌦️',
-    '179': '🌨️',
-    '182': '🌨️',
-    '185': '🌨️',
-    '200': '⛈️',
-    '227': '🌨️',
-    '230': '❄️',
-    '248': '🌫️',
-    '260': '🌫️',
-    '263': '🌧️',
-    '266': '🌧️',
-    '281': '🌨️',
-    '284': '🌨️',
-    '293': '🌧️',
-    '296': '🌧️',
-    '299': '🌧️',
-    '302': '🌧️',
-    '305': '🌧️',
-    '308': '🌧️',
-    '311': '🌨️',
-    '314': '🌨️',
-    '317': '🌨️',
-    '320': '🌨️',
-    '323': '🌨️',
-    '326': '🌨️',
-    '329': '🌨️',
-    '332': '🌨️',
-    '335': '❄️',
-    '338': '❄️',
-    '350': '🌨️',
-    '353': '🌧️',
-    '356': '🌧️',
-    '359': '🌧️',
-    '362': '🌨️',
-    '365': '🌨️',
-    '368': '🌨️',
-    '371': '🌨️',
-    '374': '🌨️',
-    '377': '🌨️',
-    '386': '⛈️',
-    '389': '⛈️',
-    '392': '⛈️',
-    '395': '❄️'
+    0: '☀️',
+    1: '🌤️',
+    2: '⛅',
+    3: '☁️',
+    45: '🌫️',
+    48: '🌫️',
+    51: '🌧️',
+    53: '🌧️',
+    55: '🌧️',
+    56: '🌧️',
+    57: '🌧️',
+    61: '🌧️',
+    63: '🌧️',
+    65: '🌧️',
+    66: '🌨️',
+    67: '🌨️',
+    71: '🌨️',
+    73: '🌨️',
+    75: '❄️',
+    77: '🌨️',
+    80: '🌦️',
+    81: '🌦️',
+    82: '🌦️',
+    85: '🌨️',
+    86: '🌨️',
+    95: '⛈️',
+    96: '⛈️',
+    99: '⛈️'
   };
   return icons[code] || '🌡️';
 }
