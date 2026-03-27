@@ -1,0 +1,32 @@
+name: Fetch METAR
+
+on:
+  schedule:
+    # 每10分钟更新一次
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # 也可手动触发
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            data/metar.json
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch METAR
+        run: |
+          mkdir -p data
+          RESPONSE=$(curl -s "https://tgftp.nws.noaa.gov/data/observations/metar/stations/ZSPD.TXT")
+          DATE=$(echo "$RESPONSE" | head -1)
+          METAR=$(echo "$RESPONSE" | tail -1)
+          echo "{\"station\":\"ZSPD\",\"date\":\"$DATE\",\"rawOb\":\"$METAR\",\"updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > data/metar.json
+
+      - name: Commit & Push
+        uses: actions-js/push@master
+        with:
+          message: 'Update METAR data'
+          add: 'data/metar.json'

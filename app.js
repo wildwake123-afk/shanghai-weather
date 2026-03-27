@@ -1,7 +1,7 @@
 // 上海天气 - 实时天气查看器
-// 数据来源: AviationWeather.gov 官方 METAR (ZSPD)
+// 数据来源: NOAA METAR via GitHub Pages 同源数据文件
+// METAR 每10分钟由 GitHub Actions 自动更新
 
-const METAR_API = 'https://aviationweather.gov/api/data/metar?ids=ZSPD&format=json';
 const DEFAULT_REFRESH_INTERVAL = 5;
 
 const loadingEl = document.getElementById('loading');
@@ -62,11 +62,11 @@ function restartAutoRefresh() {
 async function fetchMetar() {
   try {
     showLoading(true);
-    const response = await fetch(METAR_API);
-    if (!response.ok) throw new Error('网络请求失败');
+    // 强制刷新：加时间戳防止浏览器缓存
+    const response = await fetch(`./data/metar.json?t=${Date.now()}`);
+    if (!response.ok) throw new Error('获取数据失败');
     const data = await response.json();
-    if (!data || data.length === 0) throw new Error('无 METAR 数据');
-    updateUI(data[0]);
+    updateUI(data);
     showLoading(false);
   } catch (error) {
     console.error('获取天气失败:', error);
@@ -74,10 +74,12 @@ async function fetchMetar() {
   }
 }
 
-function getCondition(cover, rawOb) {
-  if (cover === 'CAVOK' || cover === 'SKC' || cover === 'CLR') {
-    return { icon: '☀️', text: '晴空万里' };
-  }
+function getCondition(rawOb) {
+  if (!rawOb) return { icon: '🌡️', text: '未知' };
+  
+  if (rawOb.includes('CAVOK')) return { icon: '☀️', text: '晴空万里' };
+  if (rawOb.includes('SKC') || rawOb.includes('CLR')) return { icon: '☀️', text: '晴' };
+  
   const wxMap = {
     'TS': { icon: '⛈️', text: '雷暴' },
     'TSRA': { icon: '⛈️', text: '雷雨' },
@@ -93,100 +95,139 @@ function getCondition(cover, rawOb) {
     'SQ': { icon: '💨', text: '飑' },
     'FC': { icon: '🌪️', text: '龙卷风' },
   };
-  const wxMatch = rawOb.match(/(TS|TSRA|RA|DZ|SN|SG|GR|GS|BR|FG|HZ|SQ|FC)/);
-  if (wxMatch && wxMap[wxMatch[0]]) return wxMap[wxMatch[0]];
-  const coverMap = {
-    'FEW': { icon: '🌤️', text: '少云' },
-    'SCT': { icon: '⛅', text: '疏云' },
-    'BKN': { icon: '☁️', text: '多云' },
-    'OVC': { icon: '☁️', text: '阴天' },
-    'VV': { icon: '🌫️', text: '垂直能见度低' },
+  
+  for (const [key, val] of Object.entries(wxMap)) {
+    if (rawOb.includes(key)) return val;
+  }
+  
+  if (rawOb.includes('OVC')) return { icon: '☁️', text: '阴天' };
+  if (rawOb.includes('BKN')) return { icon: '☁️', text: '多云' };
+  if (rawOb.includes('SCT')) return { icon: '⛅', text: '疏云' };
+  if (rawOb.includes('FEW')) return { icon: '🌤️', text: '少云' };
+  
+  return { icon: '☁️', text: '多云' };
+}
+
+function parseMetar(rawOb) {
+  const result = {
+    wind: '--', windSpeed: 0, windDir: 0,
+    temp: '--', dewp: '--',
+    pressure: '--', visibility: '≥10km',
+    clouds: '', wx: ''
   };
-  if (cover && coverMap[cover]) return coverMap[cover];
-  if (cover) return { icon: '☁️', text: cover };
-  return { icon: '🌡️', text: '未知' };
+  
+  if (!rawOb) return result;
+  
+  // 风向风速 17004MPS 或 00000MPS
+  const windMatch = rawOb.match(/(\d{3})(\d{2})MPS/);
+  if (windMatch) {
+    let dir = parseInt(windMatch[1]);
+    const speed = parseInt(windMatch[2]);
+    const dirNames = ['北','北北东','东北东','东北东','东','东南东','东南东','南','西南西','西南西','西','西北西','西北西','北北西','北北西','北'];
+    result.windDir = dir;
+    result.windSpeed = speed;
+    const dirText = dir === 0 ? '静风' : `${dir}°(${dirNames[Math.round(dir/22.5)] || dir+'°'})`;
+    const knots = (speed * 1.94384).toFixed(1);
+    result.wind = `${dirText} ${speed}m/s (${knots}kt)`;
+    
+    // 变量风向
+    const varMatch = rawOb.match(/(\d{3})V(\d{3})/);
+    if (varMatch) result.wind += ` 变风${varMatch[1]}°-${varMatch[2]}°`;
+  }
+  
+  // 气温/露点 17/10 或 M05/M10
+  const tdMatch = rawOb.match(/(M)?(\d{2})\/(M)?(\d{2})|(\d{2})\/(\d{2})/);
+  if (tdMatch) {
+    if (tdMatch[5] && tdMatch[6]) {
+      result.temp = `${tdMatch[5]}°C`;
+      result.dewp = `${tdMatch[6]}°C`;
+    } else if (tdMatch[1] && tdMatch[2]) {
+      result.temp = `-${tdMatch[2]}°C`;
+      if (tdMatch[4]) result.dewp = `-${tdMatch[4]}°C`;
+      else if (tdMatch[3]) result.dewp = `${tdMatch[4]}°C`;
+    }
+  }
+  
+  // 气压 Q1015
+  const pressMatch = rawOb.match(/Q(\d{4})/);
+  if (pressMatch) result.pressure = `${pressMatch[1]} hPa`;
+  
+  // 能见度
+  if (rawOb.includes('CAVOK')) {
+    result.visibility = '≥10km';
+  } else {
+    const visMatch = rawOb.match(/(^|\s)(\d{4})(?=\s|$)/);
+    if (visMatch) {
+      const vis = parseInt(visMatch[2]);
+      result.visibility = vis >= 9999 ? '≥10km' : `${vis}m`;
+    }
+  }
+  
+  // 天气现象
+  const wxMatch = rawOb.match(/(TS|TSRA|RA|DZ|SN|SG|GR|GS|BR|FG|HZ|SQ|FC)/);
+  if (wxMatch) result.wx = wxMatch[0];
+  
+  // 云层
+  const cloudMatch = rawOb.match(/(FEW|SCT|BKN|OVC|VV)(\d{3})/g);
+  if (cloudMatch) {
+    const coverMap = { 'FEW': '少云', 'SCT': '疏云', 'BKN': '多云', 'OVC': '阴天', 'VV': '垂直能见度' };
+    result.clouds = cloudMatch.map(c => {
+      const type = c.slice(0, 3);
+      const h = parseInt(c.slice(3)) * 100;
+      return `${coverMap[type] || type} ${h}ft`;
+    }).join(' | ');
+  }
+  
+  return result;
 }
 
-function windDirText(deg) {
-  if (deg === 0 || deg === 360) return '北';
-  if (deg === 90) return '东';
-  if (deg === 180) return '南';
-  if (deg === 270) return '西';
-  if (deg >= 1 && deg <= 22) return '北北东';
-  if (deg >= 23 && deg <= 67) return '东北东';
-  if (deg >= 68 && deg <= 112) return '东';
-  if (deg >= 113 && deg <= 157) return '东南东';
-  if (deg >= 158 && deg <= 202) return '南';
-  if (deg >= 203 && deg <= 247) return '西南西';
-  if (deg >= 248 && deg <= 292) return '西';
-  if (deg >= 293 && deg <= 337) return '西北西';
-  if (deg >= 338 && deg <= 360) return '北北西';
-  return `${deg}°`;
-}
-
-function calcHumidity(temp, dewp) {
-  const t = parseFloat(temp);
-  const d = parseFloat(dewp);
+function calcHumidity(tempStr, dewpStr) {
+  const t = parseFloat(tempStr);
+  const d = parseFloat(dewpStr);
   if (isNaN(t) || isNaN(d) || t <= d) return '--';
   const rh = 100 * Math.exp((17.625 * d) / (243.04 + d) - (17.625 * t) / (243.04 + t));
   return `${Math.round(rh)}%`;
 }
 
-function formatTime(isoString) {
-  const d = new Date(isoString);
-  const local = d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const utc = d.toISOString().slice(11, 16) + ' UTC';
-  return { local, utc };
-}
-
 function updateUI(data) {
-  const temp = parseFloat(data.temp);
-  const dewp = parseFloat(data.dewp);
-  const wspd = parseFloat(data.wspd);
-  const wdir = parseFloat(data.wdir);
+  const parsed = parseMetar(data.rawOb);
+  const cond = getCondition(data.rawOb);
+  const temp = parseFloat(parsed.temp);
   
-  document.getElementById('location').textContent = `📍 ${data.icaoId} 上海浦东机场`;
-  document.getElementById('mainTemp').textContent = `${temp}°`;
-  
-  const cond = getCondition(data.cover, data.rawOb);
+  document.getElementById('location').textContent = `📍 ${data.station} 上海浦东机场`;
+  document.getElementById('mainTemp').textContent = isNaN(temp) ? '--' : `${temp}°`;
   document.getElementById('condition').textContent = `${cond.icon} ${cond.text}`;
-  document.getElementById('feelsLike').textContent = `${temp}°C`;
-  document.getElementById('humidity').textContent = calcHumidity(temp, dewp);
-  
-  const knots = (wspd * 1.94384).toFixed(1);
-  const dirText = wdir ? windDirText(wdir) : '--';
-  document.getElementById('wind').textContent = `${dirText} ${wspd} m/s (${knots} kt)`;
-  
-  const visText = data.visib === '6+' ? '≥10km' : `${data.visib} km`;
-  const wxMatch = data.rawOb.match(/(TS|TSRA|RA|DZ|SN|SG|GR|GS|BR|FG|HZ|SQ|FC)/);
-  document.getElementById('precipitation').textContent = wxMatch ? wxMatch[0] : '无';
+  document.getElementById('feelsLike').textContent = parsed.temp;
+  document.getElementById('humidity').textContent = calcHumidity(parsed.temp, parsed.dewp);
+  document.getElementById('wind').textContent = parsed.wind;
+  document.getElementById('precipitation').textContent = parsed.wx || '无';
   
   ensureExtraFields();
-  document.getElementById('pressureDisplay').textContent = `${data.altim} hPa`;
-  document.getElementById('visibilityDisplay').textContent = visText;
+  document.getElementById('pressureDisplay').textContent = parsed.pressure;
+  document.getElementById('visibilityDisplay').textContent = parsed.visibility;
   
-  const timeInfo = formatTime(data.reportTime);
-  const container = document.getElementById('forecast');
-  
-  let cloudInfo = '';
-  if (data.clouds && data.clouds.length > 0) {
-    const coverMap = { 'FEW': '少云', 'SCT': '疏云', 'BKN': '多云', 'OVC': '阴天' };
-    cloudInfo = data.clouds.map(c => `${coverMap[c.cover] || c.cover} ${c.base || '?'}00ft`).join(' | ');
+  // 时间格式化
+  let timeDisplay = data.date || '';
+  if (data.updated) {
+    const d = new Date(data.updated);
+    const local = d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const utc = d.toISOString().slice(11, 16) + ' UTC';
+    timeDisplay = `${utc} / ${local}`;
   }
   
+  const container = document.getElementById('forecast');
   container.innerHTML = `
     <h4>📡 METAR 原始数据</h4>
     <div class="metar-raw">${data.rawOb}</div>
     <div class="metar-info">
-      <div><span>🕐 ${timeInfo.utc} / ${timeInfo.local}</span></div>
-      <div><span>📊 ${data.altim} hPa</span></div>
-      <div><span>👁️ ${visText}</span></div>
-      ${cloudInfo ? `<div><span>☁️ ${cloudInfo}</span></div>` : ''}
-      <div><span>🛫 ${data.fltCat || 'N/A'}</span></div>
+      <div><span>🕐 ${timeDisplay}</span></div>
+      <div><span>📊 ${parsed.pressure}</span></div>
+      <div><span>👁️ ${parsed.visibility}</span></div>
+      ${parsed.clouds ? `<div><span>☁️ ${parsed.clouds}</span></div>` : ''}
     </div>
   `;
   
-  document.getElementById('updateTime').textContent = new Date().toLocaleString('zh-CN');
+  document.getElementById('updateTime').textContent = `数据更新: ${new Date(data.updated).toLocaleString('zh-CN')}`;
   showContent(true);
 }
 
