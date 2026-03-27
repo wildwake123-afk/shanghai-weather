@@ -3,62 +3,110 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZSPD METAR - 上海浦东机场</title>
-  <link rel="stylesheet" href="style.css">
+  <title>ZSPD METAR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f23; color: #e0e0e0; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+    .card { background: #1a1a2e; border-radius: 20px; padding: 28px; width: 100%; max-width: 440px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    h1 { font-size: 1.1rem; font-weight: 500; color: #888; }
+    .refresh-btn { background: #16213e; border: none; color: #4fc3f7; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 0.9rem; }
+    .refresh-btn:hover { background: #1f3460; }
+    .metar { background: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 16px 20px; font-family: 'Courier New', monospace; font-size: 1.05rem; color: #4fc3f7; letter-spacing: 0.5px; margin-bottom: 20px; word-break: break-all; min-height: 60px; display: flex; align-items: center; }
+    .meta { font-size: 0.85rem; color: #666; margin-bottom: 16px; }
+    .next { font-size: 0.8rem; color: #444; text-align: center; margin-bottom: 16px; }
+    .footer { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 12px; border-top: 1px solid #2a2a3e; padding-top: 16px; }
+    .footer input { background: #0d1117; border: 1px solid #30363d; color: #e0e0e0; padding: 6px 12px; border-radius: 8px; width: 56px; text-align: center; font-size: 0.9rem; }
+    .footer button { background: #4fc3f7; border: none; color: #0f0f23; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    .footer button:hover { background: #29b6f6; }
+    .loading { text-align: center; padding: 40px 0; color: #555; font-size: 1rem; }
+    .loading::after { content: '...'; animation: dots 1.5s infinite; }
+    @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>🛫 上海浦东机场 METAR</h1>
-      <button class="settings-btn" id="settingsBtn">⚙️ 设置</button>
-    </header>
-
-    <div class="weather-card" id="weatherCard">
-      <div class="loading" id="loading">加载中...</div>
-      <div class="weather-content" id="weatherContent" style="display:none">
-        <div class="location" id="location"></div>
-        <div class="main-temp" id="mainTemp"></div>
-        <div class="condition" id="condition"></div>
-        <div class="details">
-          <div class="detail-item">
-            <span class="label">体感</span>
-            <span class="value" id="feelsLike"></span>
-          </div>
-          <div class="detail-item">
-            <span class="label">湿度</span>
-            <span class="value" id="humidity"></span>
-          </div>
-          <div class="detail-item">
-            <span class="label">风速</span>
-            <span class="value" id="wind"></span>
-          </div>
-          <div class="detail-item">
-            <span class="label">降水</span>
-            <span class="value" id="precipitation"></span>
-          </div>
-        </div>
-        <div class="metar-section" id="forecast"></div>
-        <div class="update-time">更新时间: <span id="updateTime"></span></div>
-      </div>
-      <div class="error" id="error" style="display:none"></div>
+  <div class="card">
+    <div class="header">
+      <h1>📍 ZSPD 上海浦东机场</h1>
+      <button class="refresh-btn" id="btn">🔄 刷新</button>
     </div>
-
-    <div class="settings-panel" id="settingsPanel">
-      <h3>⚙️ 刷新设置</h3>
-      <div class="setting-item">
-        <label for="refreshInterval">刷新间隔（分钟）</label>
-        <input type="number" id="refreshInterval" min="1" max="60" value="5">
-      </div>
-      <div class="setting-actions">
-        <button class="btn-primary" id="saveSettings">保存</button>
-        <button class="btn-secondary" id="closeSettings">取消</button>
-      </div>
-      <button class="btn-refresh" id="refreshNow">🔄 立即刷新</button>
+    <div id="loading" class="loading">加载中</div>
+    <div id="wrap" style="display:none">
+      <div class="metar" id="metar"></div>
+      <div class="meta" id="meta"></div>
+      <div class="next" id="next"></div>
     </div>
-
-    <div class="toast" id="toast"></div>
+    <div class="footer">
+      <input type="number" id="minInput" min="1" max="60" value="5">
+      <span style="color:#555;font-size:0.85rem">分钟后自动刷新</span>
+      <button id="setBtn">设置</button>
+    </div>
   </div>
 
-  <script src="app.js"></script>
+  <script>
+    const DATA_URL = 'https://raw.githubusercontent.com/wildwake123-afk/shanghai-weather/main/data/metar.json';
+
+    let interval = parseInt(localStorage.getItem('metarInterval')) || 5;
+    let timer = null;
+    let nextTimer = null;
+    let lastFetchTime = 0;
+
+    document.getElementById('minInput').value = interval;
+
+    function loadMetar() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('wrap').style.display = 'none';
+
+      const ts = '?t=' + Date.now();
+      window.fetch(DATA_URL + ts)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('wrap').style.display = 'block';
+          document.getElementById('metar').textContent = d.rawOb;
+          var updated = new Date(d.updated);
+          document.getElementById('meta').textContent = '数据时间: ' + updated.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+          lastFetchTime = Date.now();
+        })
+        .catch(function() {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('wrap').style.display = 'block';
+          document.getElementById('metar').textContent = '获取失败，请检查网络';
+          document.getElementById('meta').textContent = '';
+        });
+    }
+
+    function startTimer() {
+      clearInterval(timer);
+      clearInterval(nextTimer);
+      timer = setInterval(loadMetar, interval * 60000);
+      nextTimer = setInterval(updateNext, 1000);
+      updateNext();
+    }
+
+    function updateNext() {
+      var elapsed = Date.now() - lastFetchTime;
+      var total = interval * 60000;
+      var remaining = Math.max(0, total - (elapsed % total));
+      var mm = Math.floor(remaining / 60000);
+      var ss = Math.floor((remaining % 60000) / 1000);
+      document.getElementById('next').textContent = '下次刷新: ' + mm + '分' + (ss < 10 ? '0' : '') + ss + '秒';
+    }
+
+    document.getElementById('btn').addEventListener('click', loadMetar);
+
+    document.getElementById('setBtn').addEventListener('click', function() {
+      var v = parseInt(document.getElementById('minInput').value);
+      if (v >= 1 && v <= 60) {
+        interval = v;
+        localStorage.setItem('metarInterval', v);
+        startTimer();
+      }
+    });
+
+    // 初始化
+    loadMetar();
+    startTimer();
+  </script>
 </body>
 </html>
